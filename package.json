@@ -1,0 +1,25 @@
+{
+  "name": "for-fun",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.17",
+    "vite": "^8.0.0"
+  },
+  "dependencies": {
+    "lucide-react": "^0.454.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  }
+}
