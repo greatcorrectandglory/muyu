@@ -1,36 +1,106 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Settings, Sparkles, Volume2, VolumeX } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Cloud, LogIn, LogOut, Settings, Sparkles, Volume2, VolumeX } from "lucide-react";
 import templeImage from "./temple-bg.jpg";
 import frameIdle from "../1.jpg";
 import frameStrike from "../2.jpg";
+import { loadPendingDelta, savePendingDelta } from "./lib/pendingDeltaStore";
+import { isSupabaseConfigured, supabase } from "./lib/supabaseClient";
 
 const STRIKE_X = "25%";
 const STRIKE_Y = "66%";
+const FLUSH_INTERVAL_MS = 5000;
+const FLUSH_THRESHOLD = 20;
 
 const getLevel = (count) => {
   if (count > 10000) return "大德菩萨";
   if (count > 5000) return "云端罗汉";
   if (count > 2000) return "数字法师";
   if (count > 500) return "修行居士";
-  if (count > 100) return "精进敲鱼人";
-  return "初阶敲鱼人";
+  if (count > 100) return "精进修行人";
+  return "初阶修行人";
+};
+
+const parseRpcMerit = (data, fallback) => {
+  if (typeof data === "number") return data;
+  if (typeof data === "string") {
+    const parsed = Number.parseInt(data, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  if (Array.isArray(data) && data.length > 0) {
+    const row = data[0];
+    if (typeof row === "number") return row;
+    if (typeof row?.merit_total === "number") return row.merit_total;
+    if (typeof row?.merit_total === "string") {
+      const parsed = Number.parseInt(row.merit_total, 10);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+  }
+
+  if (typeof data?.merit_total === "number") return data.merit_total;
+  if (typeof data?.merit_total === "string") {
+    const parsed = Number.parseInt(data.merit_total, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  return fallback;
 };
 
 const App = () => {
-  const [merit, setMerit] = useState(0);
   const [isAuto, setIsAuto] = useState(false);
   const [autoSpeed, setAutoSpeed] = useState(800);
   const [floaters, setFloaters] = useState([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isStriking, setIsStriking] = useState(false);
-  const [zenLevel, setZenLevel] = useState("初阶敲鱼人");
+  const [isPageHidden, setIsPageHidden] = useState(false);
+
+  const [remoteMeritTotal, setRemoteMeritTotal] = useState(0);
+  const [localPendingDelta, setLocalPendingDelta] = useState(() => loadPendingDelta());
+  const [syncStatus, setSyncStatus] = useState(isSupabaseConfigured ? "idle" : "disabled");
+  const [syncError, setSyncError] = useState("");
+
+  const [session, setSession] = useState(null);
+  const [emailInput, setEmailInput] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
 
   const timerRef = useRef(null);
   const audioRef = useRef(null);
+  const pendingRef = useRef(localPendingDelta);
+  const remoteRef = useRef(remoteMeritTotal);
+  const sessionRef = useRef(session);
+  const isFlushingRef = useRef(false);
+
+  const displayMerit = remoteMeritTotal + localPendingDelta;
+  const zenLevel = useMemo(() => getLevel(displayMerit), [displayMerit]);
+  const isLoggedIn = Boolean(session?.user);
+  const shouldRunAutoTap = isAuto && !isPageHidden;
 
   useEffect(() => {
-    setZenLevel(getLevel(merit));
-  }, [merit]);
+    pendingRef.current = localPendingDelta;
+    savePendingDelta(localPendingDelta);
+  }, [localPendingDelta]);
+
+  useEffect(() => {
+    remoteRef.current = remoteMeritTotal;
+  }, [remoteMeritTotal]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+
+    const handleVisibilityChange = () => {
+      setIsPageHidden(document.hidden);
+    };
+
+    handleVisibilityChange();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   const playWoodFishSound = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -61,7 +131,7 @@ const App = () => {
   }, []);
 
   const tap = useCallback(() => {
-    setMerit((prev) => prev + 1);
+    setLocalPendingDelta((prev) => prev + 1);
     setIsStriking(true);
     setTimeout(() => setIsStriking(false), 110);
 
@@ -85,17 +155,219 @@ const App = () => {
   }, [isMuted, playWoodFishSound]);
 
   useEffect(() => {
-    if (isAuto) {
-      timerRef.current = setInterval(tap, autoSpeed);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+    if (!shouldRunAutoTap) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return undefined;
     }
 
+    timerRef.current = setInterval(tap, autoSpeed);
+
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
-  }, [isAuto, autoSpeed, tap]);
+  }, [autoSpeed, shouldRunAutoTap, tap]);
+
+  const flushPendingDelta = useCallback(async (force = false) => {
+    if (!supabase || !sessionRef.current) return false;
+    if (isFlushingRef.current) return false;
+
+    const delta = pendingRef.current;
+    if (delta <= 0) return true;
+    if (!force && delta < FLUSH_THRESHOLD) return true;
+
+    isFlushingRef.current = true;
+    setSyncStatus("syncing");
+    setSyncError("");
+
+    try {
+      const { data, error } = await supabase.rpc("increment_merit", { p_delta: delta });
+      if (error) throw error;
+
+      const nextRemote = parseRpcMerit(data, remoteRef.current + delta);
+      setRemoteMeritTotal(nextRemote);
+      setLocalPendingDelta((prev) => Math.max(0, prev - delta));
+      setSyncStatus("idle");
+      return true;
+    } catch (error) {
+      setSyncStatus("offline");
+      setSyncError(error?.message ?? "未知同步错误");
+      return false;
+    } finally {
+      isFlushingRef.current = false;
+    }
+  }, []);
+
+  const bootstrapRemoteState = useCallback(async () => {
+    if (!supabase || !sessionRef.current) return false;
+
+    setSyncStatus("syncing");
+    setSyncError("");
+
+    const { data, error } = await supabase.rpc("increment_merit", { p_delta: 0 });
+    if (error) {
+      setSyncStatus("error");
+      setSyncError(error.message ?? "加载云端功德失败");
+      return false;
+    }
+
+    const nextRemote = parseRpcMerit(data, 0);
+    setRemoteMeritTotal(nextRemote);
+    setSyncStatus("idle");
+    return true;
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setSyncStatus("disabled");
+      return undefined;
+    }
+
+    let mounted = true;
+
+    supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (!mounted) return;
+        if (error) {
+          setSyncStatus("error");
+          setSyncError(error.message ?? "读取登录会话失败");
+          return;
+        }
+
+        setSession(data.session ?? null);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setSyncStatus("error");
+        setSyncError(error.message ?? "初始化登录状态失败");
+      });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setRemoteMeritTotal(0);
+      setSyncError("");
+      if (isSupabaseConfigured) {
+        setSyncStatus("idle");
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      const loaded = await bootstrapRemoteState();
+      if (!loaded || cancelled) return;
+      await flushPendingDelta(true);
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrapRemoteState, flushPendingDelta, session]);
+
+  useEffect(() => {
+    if (!session) return undefined;
+
+    const id = setInterval(() => {
+      void flushPendingDelta(false);
+    }, FLUSH_INTERVAL_MS);
+
+    return () => clearInterval(id);
+  }, [flushPendingDelta, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (localPendingDelta < FLUSH_THRESHOLD) return;
+
+    void flushPendingDelta(true);
+  }, [flushPendingDelta, localPendingDelta, session]);
+
+  const handleSendMagicLink = useCallback(async () => {
+    if (!supabase || !isSupabaseConfigured) {
+      setAuthMessage("未配置 Supabase。请添加 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。");
+      return;
+    }
+
+    const email = emailInput.trim();
+    if (!email) {
+      setAuthMessage("请先输入邮箱地址。");
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      setAuthMessage(`发送登录邮件失败：${error.message}`);
+      return;
+    }
+
+    setAuthMessage("登录邮件已发送，请查收邮箱完成登录。");
+  }, [emailInput]);
+
+  const handleSignOut = useCallback(async () => {
+    if (!supabase) return;
+
+    await flushPendingDelta(true);
+
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setAuthMessage(`退出登录失败：${error.message}`);
+      return;
+    }
+
+    setAuthMessage("已退出登录。");
+  }, [flushPendingDelta]);
+
+  const handleManualSync = useCallback(async () => {
+    if (!session) return;
+    await flushPendingDelta(true);
+  }, [flushPendingDelta, session]);
+
+  const handleReset = useCallback(() => {
+    if (session) {
+      setAuthMessage("v1 暂不支持云端重置，如需重置请在 Supabase 后台修改。");
+      return;
+    }
+
+    if (window.confirm("是否清空本地待同步功德？")) {
+      setLocalPendingDelta(0);
+    }
+  }, [session]);
+
+  const syncHint = useMemo(() => {
+    if (!isSupabaseConfigured) return "未配置 Supabase，当前仅本地记录。";
+    if (!isLoggedIn) return `未登录，当前本地待同步：${localPendingDelta}`;
+    if (syncStatus === "syncing") return "正在同步到云端...";
+    if (syncStatus === "offline") return `网络异常，当前本地待同步：${localPendingDelta}`;
+    if (syncStatus === "error") return syncError ? `同步错误：${syncError}` : "同步错误";
+    if (localPendingDelta > 0) return `已登录，待同步：${localPendingDelta}`;
+    return "已登录，云端已同步。";
+  }, [isLoggedIn, localPendingDelta, syncError, syncStatus]);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#2c1d14] text-[#f5e7c8]">
@@ -109,21 +381,26 @@ const App = () => {
         <section className="rounded-3xl border border-[#9f7a43]/50 bg-[#2c1d14]/72 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] backdrop-blur-sm">
           <p className="text-[11px] tracking-[0.22em] text-[#d8be8a]">累计功德</p>
           <div className="mt-2 flex items-end justify-between gap-4">
-            <h1 className="text-5xl font-black tabular-nums text-[#f9e5b6]">{merit.toLocaleString()}</h1>
+            <h1 className="text-5xl font-black tabular-nums text-[#f9e5b6]">{displayMerit.toLocaleString("zh-CN")}</h1>
             <div className="rounded-full border border-[#b1884c] bg-[#4e321f]/60 px-4 py-1 text-sm font-bold text-[#f7dba5]">
               {zenLevel}
             </div>
+          </div>
+          <div className="mt-3 rounded-xl border border-[#8f6a38]/60 bg-[#211108]/55 px-3 py-2 text-xs text-[#e8cc98]">
+            <p className="flex items-center gap-2">
+              <Cloud size={14} />
+              {syncHint}
+            </p>
+            {isAuto && isPageHidden ? (
+              <p className="mt-1 text-[#f8d68f]">后台已暂停自动敲击，回到前台后继续。</p>
+            ) : null}
           </div>
         </section>
 
         <section className="relative flex flex-1 items-center justify-center py-5">
           <div className="relative h-[clamp(320px,70vw,470px)] w-full max-w-[30rem]">
             <div className="absolute inset-0 overflow-hidden rounded-[2rem] border border-[#9f7a43]/40 bg-[#201108]/50 shadow-[0_18px_42px_rgba(0,0,0,0.45)]">
-              <img
-                src={isStriking ? frameStrike : frameIdle}
-                alt="敲击木鱼人物"
-                className="pointer-events-none h-full w-full object-cover"
-              />
+              <img src={isStriking ? frameStrike : frameIdle} alt="木鱼" className="pointer-events-none h-full w-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-[#1d1008]/18 via-transparent to-[#1d1008]/3" />
             </div>
 
@@ -155,7 +432,7 @@ const App = () => {
             <p className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap text-sm font-bold tracking-[0.16em] text-[#ebd1a0]">
               <span className="inline-flex items-center gap-2">
                 <Sparkles size={14} />
-                一念一击，积善修心
+                一念一敲，积善修心
                 <Sparkles size={14} />
               </span>
             </p>
@@ -164,6 +441,46 @@ const App = () => {
 
         <section className="rounded-3xl border border-[#9f7a43]/60 bg-[#2c1d14]/72 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] backdrop-blur-sm">
           <div className="flex flex-col gap-4">
+            <div className="grid gap-2 rounded-xl border border-[#8f6a38]/50 bg-[#24130a]/60 p-3">
+              {!isLoggedIn ? (
+                <>
+                  <label htmlFor="email-input" className="text-xs font-semibold tracking-[0.08em] text-[#e6c88f]">
+                    邮箱登录（免密链接）
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="email-input"
+                      type="email"
+                      value={emailInput}
+                      onChange={(event) => setEmailInput(event.target.value)}
+                      placeholder="请输入邮箱地址"
+                      className="min-w-0 flex-1 rounded-lg border border-[#815e34] bg-[#2f1b10] px-3 py-2 text-sm text-[#f5e7c8] outline-none placeholder:text-[#8f744e] focus:border-[#c59a5d]"
+                    />
+                    <button
+                      onClick={handleSendMagicLink}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#b98b50] px-3 py-2 text-sm font-bold text-[#2a180e]"
+                    >
+                      <LogIn size={14} />
+                      登录
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-between gap-2 text-sm text-[#f1d7a6]">
+                  <span className="truncate">{session.user.email}</span>
+                  <button
+                    onClick={handleSignOut}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[#4a2f1c] px-3 py-2 font-semibold text-[#d8b987]"
+                  >
+                    <LogOut size={14} />
+                    退出
+                  </button>
+                </div>
+              )}
+
+              {authMessage ? <p className="text-xs text-[#ddbf86]">{authMessage}</p> : null}
+            </div>
+
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-semibold text-[#f2dbad]">
                 <div className={`rounded-xl p-2 ${isAuto ? "bg-[#a4773e] text-[#2d1b0f]" : "bg-[#4a2f1c] text-[#d3b078]"}`}>
@@ -186,8 +503,8 @@ const App = () => {
 
             <div>
               <div className="mb-2 flex justify-between text-xs font-semibold text-[#d8be8a]">
-                <span>敲击频率</span>
-                <span>{autoSpeed}ms</span>
+                <span>敲击间隔</span>
+                <span>{autoSpeed} 毫秒</span>
               </div>
               <input
                 type="range"
@@ -211,9 +528,14 @@ const App = () => {
                 {isMuted ? "静音" : "音效开"}
               </button>
               <button
-                onClick={() => {
-                  if (window.confirm("确定重置功德吗？")) setMerit(0);
-                }}
+                onClick={handleManualSync}
+                disabled={!isLoggedIn || localPendingDelta <= 0}
+                className="rounded-xl border border-[#8b673a] px-4 py-2.5 text-sm font-bold text-[#e3c892] transition-colors hover:bg-[#51331f] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                立即同步
+              </button>
+              <button
+                onClick={handleReset}
                 className="rounded-xl border border-[#8b673a] px-4 py-2.5 text-sm font-bold text-[#e3c892] transition-colors hover:bg-[#51331f]"
               >
                 重置
