@@ -12,12 +12,12 @@ const FLUSH_INTERVAL_MS = 5000;
 const FLUSH_THRESHOLD = 20;
 
 const getLevel = (count) => {
-  if (count > 10000) return "Grandmaster";
-  if (count > 5000) return "Cloud Monk";
-  if (count > 2000) return "Digital Master";
-  if (count > 500) return "Dedicated Cultivator";
-  if (count > 100) return "Beginner Monk";
-  return "Novice";
+  if (count > 10000) return "大德菩萨";
+  if (count > 5000) return "云端罗汉";
+  if (count > 2000) return "数字法师";
+  if (count > 500) return "修行居士";
+  if (count > 100) return "精进修行人";
+  return "初阶修行人";
 };
 
 const parseRpcMerit = (data, fallback) => {
@@ -196,7 +196,7 @@ const App = () => {
       return true;
     } catch (error) {
       setSyncStatus("offline");
-      setSyncError(error?.message ?? "Unknown sync error");
+      setSyncError(error?.message ?? "未知同步错误");
       return false;
     } finally {
       isFlushingRef.current = false;
@@ -212,7 +212,7 @@ const App = () => {
     const { data, error } = await supabase.rpc("increment_merit", { p_delta: 0 });
     if (error) {
       setSyncStatus("error");
-      setSyncError(error.message ?? "Failed to load remote merit");
+      setSyncError(error.message ?? "加载云端功德失败");
       return false;
     }
 
@@ -236,7 +236,7 @@ const App = () => {
         if (!mounted) return;
         if (error) {
           setSyncStatus("error");
-          setSyncError(error.message ?? "Failed to read session");
+          setSyncError(error.message ?? "读取登录会话失败");
           return;
         }
 
@@ -245,7 +245,7 @@ const App = () => {
       .catch((error) => {
         if (!mounted) return;
         setSyncStatus("error");
-        setSyncError(error.message ?? "Failed to initialize auth");
+        setSyncError(error.message ?? "初始化登录状态失败");
       });
 
     const {
@@ -304,13 +304,13 @@ const App = () => {
 
   const handleSendMagicLink = useCallback(async () => {
     if (!supabase || !isSupabaseConfigured) {
-      setAuthMessage("Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
+      setAuthMessage("未配置 Supabase。请添加 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。");
       return;
     }
 
     const email = emailInput.trim();
     if (!email) {
-      setAuthMessage("Please enter your email first.");
+      setAuthMessage("请先输入邮箱地址。");
       return;
     }
 
@@ -322,11 +322,11 @@ const App = () => {
     });
 
     if (error) {
-      setAuthMessage(`Send magic link failed: ${error.message}`);
+      setAuthMessage(`发送登录邮件失败：${error.message}`);
       return;
     }
 
-    setAuthMessage("Magic link sent. Check your email to login.");
+    setAuthMessage("登录邮件已发送，请查收邮箱完成登录。");
   }, [emailInput]);
 
   const handleSignOut = useCallback(async () => {
@@ -336,11 +336,11 @@ const App = () => {
 
     const { error } = await supabase.auth.signOut();
     if (error) {
-      setAuthMessage(`Sign out failed: ${error.message}`);
+      setAuthMessage(`退出登录失败：${error.message}`);
       return;
     }
 
-    setAuthMessage("Signed out.");
+    setAuthMessage("已退出登录。");
   }, [flushPendingDelta]);
 
   const handleManualSync = useCallback(async () => {
@@ -350,23 +350,23 @@ const App = () => {
 
   const handleReset = useCallback(() => {
     if (session) {
-      setAuthMessage("v1 does not support cloud reset. Edit value in Supabase if needed.");
+      setAuthMessage("v1 暂不支持云端重置，如需重置请在 Supabase 后台修改。");
       return;
     }
 
-    if (window.confirm("Clear local pending merit?")) {
+    if (window.confirm("是否清空本地待同步功德？")) {
       setLocalPendingDelta(0);
     }
   }, [session]);
 
   const syncHint = useMemo(() => {
-    if (!isSupabaseConfigured) return "Supabase not configured. Local-only mode.";
-    if (!isLoggedIn) return `Not logged in. Local pending: ${localPendingDelta}`;
-    if (syncStatus === "syncing") return "Syncing to cloud...";
-    if (syncStatus === "offline") return `Offline. Pending locally: ${localPendingDelta}`;
-    if (syncStatus === "error") return syncError ? `Sync error: ${syncError}` : "Sync error";
-    if (localPendingDelta > 0) return `Logged in. Pending: ${localPendingDelta}`;
-    return "Logged in. Cloud synced.";
+    if (!isSupabaseConfigured) return "未配置 Supabase，当前仅本地记录。";
+    if (!isLoggedIn) return `未登录，当前本地待同步：${localPendingDelta}`;
+    if (syncStatus === "syncing") return "正在同步到云端...";
+    if (syncStatus === "offline") return `网络异常，当前本地待同步：${localPendingDelta}`;
+    if (syncStatus === "error") return syncError ? `同步错误：${syncError}` : "同步错误";
+    if (localPendingDelta > 0) return `已登录，待同步：${localPendingDelta}`;
+    return "已登录，云端已同步。";
   }, [isLoggedIn, localPendingDelta, syncError, syncStatus]);
 
   return (
@@ -379,9 +379,9 @@ const App = () => {
 
       <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-md flex-col justify-between px-5 py-6">
         <section className="rounded-3xl border border-[#9f7a43]/50 bg-[#2c1d14]/72 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] backdrop-blur-sm">
-          <p className="text-[11px] tracking-[0.22em] text-[#d8be8a]">TOTAL MERIT</p>
+          <p className="text-[11px] tracking-[0.22em] text-[#d8be8a]">累计功德</p>
           <div className="mt-2 flex items-end justify-between gap-4">
-            <h1 className="text-5xl font-black tabular-nums text-[#f9e5b6]">{displayMerit.toLocaleString()}</h1>
+            <h1 className="text-5xl font-black tabular-nums text-[#f9e5b6]">{displayMerit.toLocaleString("zh-CN")}</h1>
             <div className="rounded-full border border-[#b1884c] bg-[#4e321f]/60 px-4 py-1 text-sm font-bold text-[#f7dba5]">
               {zenLevel}
             </div>
@@ -392,7 +392,7 @@ const App = () => {
               {syncHint}
             </p>
             {isAuto && isPageHidden ? (
-              <p className="mt-1 text-[#f8d68f]">Auto tap paused in background. Return to foreground to continue.</p>
+              <p className="mt-1 text-[#f8d68f]">后台已暂停自动敲击，回到前台后继续。</p>
             ) : null}
           </div>
         </section>
@@ -400,7 +400,7 @@ const App = () => {
         <section className="relative flex flex-1 items-center justify-center py-5">
           <div className="relative h-[clamp(320px,70vw,470px)] w-full max-w-[30rem]">
             <div className="absolute inset-0 overflow-hidden rounded-[2rem] border border-[#9f7a43]/40 bg-[#201108]/50 shadow-[0_18px_42px_rgba(0,0,0,0.45)]">
-              <img src={isStriking ? frameStrike : frameIdle} alt="Wood fish" className="pointer-events-none h-full w-full object-cover" />
+              <img src={isStriking ? frameStrike : frameIdle} alt="木鱼" className="pointer-events-none h-full w-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-[#1d1008]/18 via-transparent to-[#1d1008]/3" />
             </div>
 
@@ -413,13 +413,13 @@ const App = () => {
                   top: `calc(${STRIKE_Y} + ${item.dy}px)`,
                 }}
               >
-                <div className="animate-merit-float text-2xl font-extrabold text-[#ffe3a1]">Merit +1</div>
+                <div className="animate-merit-float text-2xl font-extrabold text-[#ffe3a1]">功德 +1</div>
               </div>
             ))}
 
             <button
               onClick={tap}
-              aria-label="Tap wood fish"
+              aria-label="敲击木鱼"
               className="absolute z-40 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-xl bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-[#d9b57a]/80"
               style={{
                 left: STRIKE_X,
@@ -432,7 +432,7 @@ const App = () => {
             <p className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap text-sm font-bold tracking-[0.16em] text-[#ebd1a0]">
               <span className="inline-flex items-center gap-2">
                 <Sparkles size={14} />
-                One tap, one merit
+                一念一敲，积善修心
                 <Sparkles size={14} />
               </span>
             </p>
@@ -445,7 +445,7 @@ const App = () => {
               {!isLoggedIn ? (
                 <>
                   <label htmlFor="email-input" className="text-xs font-semibold tracking-[0.08em] text-[#e6c88f]">
-                    EMAIL LOGIN (MAGIC LINK)
+                    邮箱登录（免密链接）
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -453,7 +453,7 @@ const App = () => {
                       type="email"
                       value={emailInput}
                       onChange={(event) => setEmailInput(event.target.value)}
-                      placeholder="you@example.com"
+                      placeholder="请输入邮箱地址"
                       className="min-w-0 flex-1 rounded-lg border border-[#815e34] bg-[#2f1b10] px-3 py-2 text-sm text-[#f5e7c8] outline-none placeholder:text-[#8f744e] focus:border-[#c59a5d]"
                     />
                     <button
@@ -461,7 +461,7 @@ const App = () => {
                       className="inline-flex items-center gap-2 rounded-lg bg-[#b98b50] px-3 py-2 text-sm font-bold text-[#2a180e]"
                     >
                       <LogIn size={14} />
-                      Login
+                      登录
                     </button>
                   </div>
                 </>
@@ -473,7 +473,7 @@ const App = () => {
                     className="inline-flex items-center gap-2 rounded-lg bg-[#4a2f1c] px-3 py-2 font-semibold text-[#d8b987]"
                   >
                     <LogOut size={14} />
-                    Logout
+                    退出
                   </button>
                 </div>
               )}
@@ -486,12 +486,12 @@ const App = () => {
                 <div className={`rounded-xl p-2 ${isAuto ? "bg-[#a4773e] text-[#2d1b0f]" : "bg-[#4a2f1c] text-[#d3b078]"}`}>
                   <Settings size={18} />
                 </div>
-                Auto Tap
+                自动敲击
               </div>
               <button
                 onClick={() => setIsAuto((prev) => !prev)}
                 className={`relative h-7 w-14 rounded-full transition-colors ${isAuto ? "bg-[#b78a4f]" : "bg-[#5c3a22]"}`}
-                aria-label="Toggle auto tap"
+                aria-label="切换自动敲击"
               >
                 <div
                   className={`absolute top-1 h-5 w-5 rounded-full bg-[#f8e2b1] transition-all ${
@@ -503,8 +503,8 @@ const App = () => {
 
             <div>
               <div className="mb-2 flex justify-between text-xs font-semibold text-[#d8be8a]">
-                <span>Tap interval</span>
-                <span>{autoSpeed}ms</span>
+                <span>敲击间隔</span>
+                <span>{autoSpeed} 毫秒</span>
               </div>
               <input
                 type="range"
@@ -525,20 +525,20 @@ const App = () => {
                 }`}
               >
                 {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                {isMuted ? "Muted" : "Sound On"}
+                {isMuted ? "静音" : "音效开"}
               </button>
               <button
                 onClick={handleManualSync}
                 disabled={!isLoggedIn || localPendingDelta <= 0}
                 className="rounded-xl border border-[#8b673a] px-4 py-2.5 text-sm font-bold text-[#e3c892] transition-colors hover:bg-[#51331f] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Sync now
+                立即同步
               </button>
               <button
                 onClick={handleReset}
                 className="rounded-xl border border-[#8b673a] px-4 py-2.5 text-sm font-bold text-[#e3c892] transition-colors hover:bg-[#51331f]"
               >
-                Reset
+                重置
               </button>
             </div>
           </div>
