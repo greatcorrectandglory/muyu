@@ -52,6 +52,7 @@ const App = () => {
   const [floaters, setFloaters] = useState([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isStriking, setIsStriking] = useState(false);
+  const [strikeKey, setStrikeKey] = useState(0);
   const [isPageHidden, setIsPageHidden] = useState(false);
 
   const [remoteMeritTotal, setRemoteMeritTotal] = useState(0);
@@ -65,6 +66,7 @@ const App = () => {
 
   const timerRef = useRef(null);
   const audioRef = useRef(null);
+  const strikeResetRef = useRef(null);
   const pendingRef = useRef(localPendingDelta);
   const remoteRef = useRef(remoteMeritTotal);
   const sessionRef = useRef(session);
@@ -102,6 +104,14 @@ const App = () => {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (strikeResetRef.current) {
+        clearTimeout(strikeResetRef.current);
+      }
+    };
+  }, []);
+
   const playWoodFishSound = useCallback(() => {
     if (typeof window === "undefined") return;
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -132,8 +142,12 @@ const App = () => {
 
   const tap = useCallback(() => {
     setLocalPendingDelta((prev) => prev + 1);
+    setStrikeKey((prev) => prev + 1);
     setIsStriking(true);
-    setTimeout(() => setIsStriking(false), 110);
+    if (strikeResetRef.current) {
+      clearTimeout(strikeResetRef.current);
+    }
+    strikeResetRef.current = setTimeout(() => setIsStriking(false), 260);
 
     const id = Date.now() + Math.random();
     setFloaters((prev) => [
@@ -400,7 +414,16 @@ const App = () => {
         <section className="relative flex flex-1 items-center justify-center py-5">
           <div className="relative h-[clamp(320px,70vw,470px)] w-full max-w-[30rem]">
             <div className="absolute inset-0 overflow-hidden rounded-[2rem] border border-[#9f7a43]/40 bg-[#201108]/50 shadow-[0_18px_42px_rgba(0,0,0,0.45)]">
-              <img src={isStriking ? frameStrike : frameIdle} alt="木鱼" className="pointer-events-none h-full w-full object-cover" />
+              <img src={frameIdle} alt="木鱼" className="pointer-events-none h-full w-full object-cover" />
+              {isStriking ? (
+                <img
+                  key={strikeKey}
+                  src={frameStrike}
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover animate-strike-frame"
+                />
+              ) : null}
               <div className="absolute inset-0 bg-gradient-to-t from-[#1d1008]/18 via-transparent to-[#1d1008]/3" />
             </div>
 
@@ -562,6 +585,30 @@ const App = () => {
 
         .animate-merit-float {
           animation: merit-float 1s ease-out forwards;
+        }
+
+        @keyframes strike-frame {
+          0% {
+            opacity: 0;
+            transform: translateY(-10px) scale(1.01);
+          }
+          22% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          62% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: translateY(3px) scale(1);
+          }
+        }
+
+        .animate-strike-frame {
+          animation: strike-frame 260ms cubic-bezier(0.2, 0.8, 0.25, 1) forwards;
+          will-change: opacity, transform;
         }
 
         input[type="range"]::-webkit-slider-thumb {
